@@ -30,6 +30,11 @@
   python main.py
 ```
 
+### Execução do teste de integração entre as classes
+```bash
+  python test_integracao.py
+```
+
 ### Extra: utilizar o freeze para gerar o requirements.txt
 ```bash
   pip freeze > requirements.txt.lock
