@@ -1,4 +1,4 @@
-### configuração de ambiente python
+### Configuração de ambiente python
 
 - Acesse o `diretório` do projeto e configure o ambiente virtual com os comandos abaixo:
 ```bash
@@ -24,7 +24,13 @@
   playwright install
 ```
 
-### utilizar o freeze para gerar o requirements.txt
+### Execução do projeto
+- Para executar o projeto, utilize o comando abaixo, etando na `pasta do projeto`:
 ```bash
-  pip freeze > requirements.txt
+  python main.py
+```
+
+### Extra: utilizar o freeze para gerar o requirements.txt
+```bash
+  pip freeze > requirements.txt.lock
 ```
