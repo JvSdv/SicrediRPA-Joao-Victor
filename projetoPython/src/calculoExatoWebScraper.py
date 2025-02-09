@@ -1,7 +1,5 @@
-import os
-import re
-from playwright.sync_api import sync_playwright
 from playwright.sync_api import Playwright
+import os
 
 class calculoExatoWebScraper:
     def __init__(
@@ -41,11 +39,12 @@ class calculoExatoWebScraper:
         self.full_xpath_indice = """xpath=/html/body/div[4]/table/tbody/tr[2]/td[2]/div[1]/form/div[3]/span[1]/div/span[6]/div/select"""
         self.full_xpath_botao_continuar = """xpath=/html/body/div[4]/table/tbody/tr[2]/td[2]/div[1]/form/div[3]/div[1]/input"""
 
+        # Estes XPaths são onde coletaremos apenas os textos crus do resultado:
         self.full_xpath_valor_atualizado = """xpath=/html/body/div[4]/table/tbody/tr[2]/td[2]/div[1]/form/div[3]/span[1]/div[2]/div[1]/p[1]/b"""
         self.full_xpath_percentual_final__fator_multiplicacao__meses_percentuais = """xpath=/html/body/div[4]/table/tbody/tr[2]/td[2]/div[1]/form/div[3]/span[1]/div[2]/div[1]/p[2]"""
 
         # --------------------------------------------------------------------------
-        # Estrutura para armazenar o resultado do cálculo
+        # Estrutura para armazenar o resultado "cru" (sem parse numérico)
         # --------------------------------------------------------------------------
         self.result = {
             "valorInformado": self.valor_a_ser_atualizado,
@@ -53,10 +52,9 @@ class calculoExatoWebScraper:
             "dataFinal": self.data_final,
             "indice": self.indice,
             "retornoDaConsulta": False,
-            "valorAtualizado": None,
-            "percentualFinal": None,
-            "fatorMultiplicacao": None,
-            "mesesPercentuais": None
+            # Os campos abaixo serão preenchidos após a navegação
+            "raw_valor_atualizado": None,
+            "raw_percentual_info": None
         }
 
         # Variáveis internas para Playwright
@@ -68,22 +66,19 @@ class calculoExatoWebScraper:
         Inicia um contexto persistente do Chromium com a extensão de adblock,
         localizada na subpasta "adblocker_extension".
         """
-        # Caminho até a pasta da extensão (manifest.json etc.)
         path_to_extension = os.path.join(os.getcwd(), "util", "adblocker_extension")
 
-        # Inicia um contexto persistente, pois extensões não funcionam em launch normal
         self.context = playwright.chromium.launch_persistent_context(
-            user_data_dir="",           # diretório vazio => não salva nada local
-            channel="chromium",         # usar channel Chrome/Chromium para suportar extensões
-            headless=headless,          # extensões normalmente não funcionam em headless, mas "chromium" pode permitir
-            slow_mo=1000,               # opcional, para ver execução passo-a-passo
+            user_data_dir="",
+            channel="chromium",
+            headless=headless,
+            slow_mo=1000,
             args=[
                 f"--disable-extensions-except={path_to_extension}",
                 f"--load-extension={path_to_extension}"
             ],
         )
 
-        # Se, ao lançar, não vier nenhuma Page aberta, criamos uma nova
         if not self.context.pages:
             self.page = self.context.new_page()
         else:
@@ -93,36 +88,6 @@ class calculoExatoWebScraper:
         """Encerra o contexto e, consequentemente, o browser."""
         if self.context:
             self.context.close()
-
-    def parse_br_number(self, br_number_str: str) -> float:
-        """
-        Converte uma string no formato (ex: "57.005,49") para float (57005.49).
-        """
-        s = br_number_str.strip()
-        s = s.replace('.', '')  # remove pontos de milhar
-        s = s.replace(',', '.') # substitui vírgula decimal por ponto
-        return float(s)
-
-    def parse_percentual_e_fator(self, text: str):
-        """
-        A partir do texto no DOM, extrai (percentualFinal, fatorMultiplicacao, textoMeses).
-        """
-        match_percentual = re.search(r"Em percentual:\s*([\d\.,]+)%", text)
-        match_fator = re.search(r"Em fator de multiplicação:\s*([\d\.,]+)", text)
-
-        split_token = "Os valores do índice utilizados neste cálculo foram:"
-        partes = text.split(split_token)
-
-        if match_percentual and match_fator and len(partes) > 1:
-            percentual_str = match_percentual.group(1)  # ex: "14,0110"
-            fator_str = match_fator.group(1)           # ex: "1,140110"
-            meses_e_percentuais = partes[1].strip()    # ex: "Abril-2021 = ...%"
-
-            percentual = self.parse_br_number(percentual_str)
-            fator = self.parse_br_number(fator_str)
-            return percentual, fator, meses_e_percentuais
-        else:
-            return None, None, None
 
     def go_to_site(self):
         """Navega até a página inicial."""
@@ -143,9 +108,11 @@ class calculoExatoWebScraper:
         self.page.wait_for_load_state("networkidle", timeout=10000)
 
     def fill_valor_a_ser_atualizado(self):
-        """Preenche o valor a ser atualizado (usa vírgula como separador decimal)."""
-        valor_str = f"{self.valor_a_ser_atualizado:,.2f}"
-        # Ajuste: "50.000,00" -> "50.000" => "50,000" -> "50,000" ... 
+        """
+        Preenche o valor a ser atualizado no formato brasileiro com vírgula
+        (ex.: 50000.00 => "50.000,00").
+        """
+        valor_str = f"{self.valor_a_ser_atualizado:,.2f}"  # "50,000.00" no Python
         valor_str = valor_str.replace(",", "X").replace(".", ",").replace("X", ".")
         self.page.wait_for_selector(self.full_xpath_valor_a_ser_atualizado, timeout=6000)
         self.page.fill(self.full_xpath_valor_a_ser_atualizado, valor_str)
@@ -172,59 +139,40 @@ class calculoExatoWebScraper:
         self.page.select_option(self.full_xpath_indice, self.indice)
 
     def click_continuar(self):
-        """Clica no botão 'Continuar' para calcular."""
+        """Clica no botão 'Continuar' para efetuar o cálculo."""
         self.page.wait_for_selector(self.full_xpath_botao_continuar, timeout=6000)
         self.page.click(self.full_xpath_botao_continuar)
         self.page.wait_for_load_state("networkidle", timeout=10000)
 
     def parse_resultado_calculo(self):
         """
-        Lê os elementos do resultado e preenche self.result com:
-          - retornoDaConsulta (bool)
-          - valorAtualizado (float)
-          - percentualFinal (float)
-          - fatorMultiplicacao (float)
-          - mesesPercentuais (str)
+        Faz apenas a leitura (coleta) dos textos crus do site,
+        sem converter para float. Armazenamos no self.result.
         """
         try:
-            # Valor atualizado
+            # Valor atualizado em texto
             self.page.wait_for_selector(self.full_xpath_valor_atualizado, timeout=8000)
-            valor_atualizado_str = self.page.inner_text(self.full_xpath_valor_atualizado)
-            # Exemplo de inner_text: "Valor atualizado: R$57.005,49"
-            valor_limpavel = re.sub(r"[^\d,\.]", "", valor_atualizado_str)  # extrair só dígitos, ponto e vírgula
-            valor_atualizado_float = self.parse_br_number(valor_limpavel)
+            raw_valor_atualizado_str = self.page.inner_text(self.full_xpath_valor_atualizado)
 
-            # Percentual final, fator e meses/anos
+            # Texto que contém o percentual final, fator de multiplicação etc.
             self.page.wait_for_selector(
                 self.full_xpath_percentual_final__fator_multiplicacao__meses_percentuais,
                 timeout=8000
             )
-            texto_informacoes_complementares = self.page.inner_text(
+            raw_percentual_info_str = self.page.inner_text(
                 self.full_xpath_percentual_final__fator_multiplicacao__meses_percentuais
             )
 
-            percentual_final, fator_multiplicacao, meses_e_percentuais = self.parse_percentual_e_fator(
-                texto_informacoes_complementares
-            )
-
-            if (
-                valor_atualizado_float is not None and
-                percentual_final is not None and
-                fator_multiplicacao is not None
-            ):
-                self.result["retornoDaConsulta"] = True
-                self.result["valorAtualizado"] = round(valor_atualizado_float, 2)
-                self.result["percentualFinal"] = round(percentual_final, 4)
-                self.result["fatorMultiplicacao"] = round(fator_multiplicacao, 6)
-                self.result["mesesPercentuais"] = meses_e_percentuais
+            self.result["raw_valor_atualizado"] = raw_valor_atualizado_str
+            self.result["raw_percentual_info"] = raw_percentual_info_str
+            self.result["retornoDaConsulta"] = True
 
         except Exception as e:
-            # Se deu erro no parsing, deixamos como False
-            print("Erro ao parsear resultado:", e)
+            print("Erro ao coletar resultado bruto:", e)
             self.result["retornoDaConsulta"] = False
 
     def run(self):
-        """Executa todo o fluxo de forma sequencial."""
+        """Executa todo o fluxo de forma sequencial até obter os textos crus."""
         self.go_to_site()
         self.click_calculos_financeiros()
         self.click_atualizacao_valor_por_indice_financeiro()
@@ -236,9 +184,9 @@ class calculoExatoWebScraper:
         self.parse_resultado_calculo()
 
     def get_result(self) -> dict:
-        """Retorna o dicionário com as informações calculadas."""
+        """Retorna o dicionário com as informações coletadas (brutas)."""
         return self.result
 
     def print_result(self):
-        """Imprime o resultado atual do cálculo."""
+        """Imprime o resultado cru atual do cálculo (antes de qualquer conversão)."""
         print(self.result)
