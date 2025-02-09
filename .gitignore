@@ -1,2 +1,4 @@
 /inicio
 *.venv
+*__pycache__
+target/
